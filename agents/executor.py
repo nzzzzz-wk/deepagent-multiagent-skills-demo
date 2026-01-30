@@ -19,8 +19,8 @@ def get_openai_model():
 
 
 def get_filesystem_backend():
-    """Get a FilesystemBackend instance configured with the project root."""
-    return FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
+    """Get a FilesystemBackend instance configured with the sandbox (tmp) directory."""
+    return FilesystemBackend(root_dir=str(PROJECT_ROOT / "tmp"), virtual_mode=True)
 
 
 # Default skills for the executor - skills relevant to code execution and testing
@@ -96,6 +96,11 @@ When you complete a task, return a summary in this format:
         system_prompt=system_prompt or default_prompt,
         backend=get_filesystem_backend(),
         skills=skills or DEFAULT_SKILLS,
+        interrupt_on={
+            "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+            "execute": {"allowed_decisions": ["approve", "reject"]},
+            "run_python": {"allowed_decisions": ["approve", "reject"]},
+        },
     )
 
 

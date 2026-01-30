@@ -1,13 +1,23 @@
 """Configuration settings for the multi-agent system."""
 
 import os
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 
 # Load .env file if it exists
 load_dotenv()
+
+
+class VectorDBConfig(BaseModel):
+    """Vector database configuration settings."""
+    provider: str = "chroma"  # chroma, milvus
+    collection_name: str = "documents"
+    uri: Optional[str] = None  # Milvus connection URI
+    api_key: Optional[str] = None
+    embedding_model: str = "text-embedding-3-small"
+    top_k: int = 5
 
 
 class ModelSettings(BaseModel):
@@ -41,4 +51,16 @@ def get_model_settings() -> ModelSettings:
         model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
         temperature=float(os.environ.get("OPENAI_TEMPERATURE", 0)) if os.environ.get("OPENAI_TEMPERATURE") else None,
         max_tokens=int(os.environ.get("OPENAI_MAX_TOKENS")) if os.environ.get("OPENAI_MAX_TOKENS") else None,
+    )
+
+
+def get_vector_db_config() -> VectorDBConfig:
+    """Get vector database settings from environment variables."""
+    return VectorDBConfig(
+        provider=os.environ.get("VECTOR_DB_PROVIDER", "chroma"),
+        collection_name=os.environ.get("VECTOR_DB_COLLECTION", "documents"),
+        uri=os.environ.get("VECTOR_DB_URI"),
+        api_key=os.environ.get("VECTOR_DB_API_KEY"),
+        embedding_model=os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+        top_k=int(os.environ.get("VECTOR_DB_TOP_K", 5)),
     )

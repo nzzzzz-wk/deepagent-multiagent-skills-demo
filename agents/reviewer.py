@@ -99,6 +99,9 @@ When you complete your review, return:
         system_prompt=system_prompt or default_prompt,
         backend=get_filesystem_backend(),
         skills=skills or DEFAULT_SKILLS,
+        interrupt_on={
+            "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+        },
     )
 
 

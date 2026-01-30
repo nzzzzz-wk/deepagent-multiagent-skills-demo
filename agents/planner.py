@@ -86,9 +86,9 @@ If you're asked to create something, respond with ONLY a plan describing how to 
         backend=get_filesystem_backend(),
         skills=skills or DEFAULT_SKILLS,
         interrupt_on={
-            "execute": True,
-            "write_file": True,
-            "run_python": True,
+            "execute": {"allowed_decisions": ["approve", "reject"]},
+            "write_file": {"allowed_decisions": ["approve", "reject"]},
+            "run_python": {"allowed_decisions": ["approve", "reject"]},
         },
     )
 
@@ -98,7 +98,7 @@ def _has_valid_api_key() -> bool:
     settings = get_model_settings()
     return bool(settings.api_key and settings.api_key != "dummy")
 
-
+# agent = create_planner_agent()
 if __name__ == "__main__":
     print("Testing Planner Agent...")
     agent = create_planner_agent()
