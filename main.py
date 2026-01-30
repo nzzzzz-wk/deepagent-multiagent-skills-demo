@@ -25,6 +25,7 @@ from config import get_model_settings
 from agents.coordinator import create_coordinator_agent
 from agents.workflows.research_workflow import create_research_workflow
 from agents.workflows.coding_workflow import create_coding_workflow
+from agents.workflows.rag_workflow import sync_execute_rag_workflow
 
 
 def handle_interrupt(result, coordinator, config):
@@ -119,7 +120,7 @@ def run_demo():
     research_wf = create_research_workflow()
     coding_wf = create_coding_workflow()
 
-    print("Commands: /ask <query>, /research <topic>, /code <task>, /quit")
+    print("Commands: /ask <query>, /search <query>, /research <topic>, /code <task>, /quit")
     print()
 
     # Reuse thread_id for multi-turn conversations
@@ -139,6 +140,16 @@ def run_demo():
             if user_input.startswith("/research "):
                 result = research_wf.invoke({"messages": [], "query": user_input[10:], "findings": ""})
                 print(f"\n{result.get('findings', '')}\n")
+            elif user_input.startswith("/search "):
+                query = user_input[7:].strip()
+                print(f"\nSearching for: {query}...")
+                result = sync_execute_rag_workflow(query=query)
+                output = result.get("final_output", {})
+                print(f"\n{output.get('answer', '')}")
+                print("\nReferences:")
+                for ref in output.get("references", []):
+                    print(f"  - [{ref.get('source')}] {ref.get('content')[:100]}...")
+                print()
             elif user_input.startswith("/code "):
                 result = coding_wf.invoke({"messages": [], "task": user_input[6:], "code": ""})
                 print(f"\n{result.get('code', '')}\n")

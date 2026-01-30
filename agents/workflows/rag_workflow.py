@@ -371,9 +371,9 @@ def create_rag_workflow(
 
 async def execute_rag_workflow(
     query: str,
-    provider: str = "chroma",
-    collection_name: str = "documents",
-    top_k: int = 5,
+    provider: str = None,
+    collection_name: str = None,
+    top_k: int = None,
     enable_rerank: bool = True,
     **kwargs
 ) -> Dict[str, Any]:
@@ -381,15 +381,24 @@ async def execute_rag_workflow(
 
     Args:
         query: User query
-        provider: Vector DB provider
-        collection_name: Collection name
-        top_k: Number of results
+        provider: Vector DB provider (default: from VECTOR_DB_PROVIDER env)
+        collection_name: Collection name (default: from VECTOR_DB_COLLECTION env)
+        top_k: Number of results (default: from VECTOR_DB_TOP_K env)
         enable_rerank: Whether to enable reranking
         **kwargs: Additional arguments
 
     Returns:
         Final workflow state
     """
+    # Load defaults from environment
+    import os
+    if provider is None:
+        provider = os.environ.get("VECTOR_DB_PROVIDER", "chroma")
+    if collection_name is None:
+        collection_name = os.environ.get("VECTOR_DB_COLLECTION", "documents")
+    if top_k is None:
+        top_k = int(os.environ.get("VECTOR_DB_TOP_K", 5))
+
     # Create workflow
     workflow = create_rag_workflow(
         provider=provider,
@@ -419,9 +428,9 @@ async def execute_rag_workflow(
 
 def sync_execute_rag_workflow(
     query: str,
-    provider: str = "chroma",
-    collection_name: str = "documents",
-    top_k: int = 5,
+    provider: str = None,
+    collection_name: str = None,
+    top_k: int = None,
     enable_rerank: bool = True,
     **kwargs
 ) -> Dict[str, Any]:
@@ -443,20 +452,27 @@ def sync_execute_rag_workflow(
 # ============================================================================
 
 if __name__ == "__main__":
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+
     logging.basicConfig(level=logging.INFO)
+
+    # Read provider from env or default to chroma
+    provider = os.environ.get("VECTOR_DB_PROVIDER", "chroma")
 
     print("\n" + "=" * 60)
     print("Testing RAG Workflow")
     print("=" * 60)
+    print(f"\nProvider: {provider}")
 
-    # Test with mock data (ChromaDB mock mode)
+    # Test with mock data (if DB not available)
     print("\n1. Creating workflow...")
-    workflow = create_rag_workflow(provider="chroma", enable_rerank=True)
+    workflow = create_rag_workflow(provider=provider, enable_rerank=True)
 
     print("2. Executing workflow...")
     result = sync_execute_rag_workflow(
         query="工厂检查要求",
-        provider="chroma",
         top_k=3
     )
 
