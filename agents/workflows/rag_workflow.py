@@ -97,30 +97,39 @@ class ChromaDBClient(BaseVectorDBClient):
 
 
 class MilvusDBClient(BaseVectorDBClient):
-    """Milvus vector database client."""
+    """Milvus vector database client using MilvusClient."""
 
-    def __init__(self, collection_name: str = "documents", uri: str = None):
+    def __init__(
+        self,
+        collection_name: str = "documents",
+        uri: str = None,
+        token: str = None,
+        database: str = "default",
+        anns_field: str = "vector",
+        metric_type: str = "COSINE"
+    ):
+        self.uri = uri or os.environ.get("VECTOR_DB_URI", "http://localhost:19530")
+        self.token = token or os.environ.get("VECTOR_DB_API_KEY", "")
+        self.database = database
+        self.collection_name = collection_name
+        self.anns_field = anns_field or os.environ.get("VECTOR_DB_ANNS_FIELD", "vector")
+        self.metric_type = metric_type or os.environ.get("VECTOR_DB_METRIC_TYPE", "COSINE")
+
+        self.client = None
+        self._connected = False
+
         try:
-            from pymilvus import connections, Collection
-            self.Collection = Collection
-            self.connections = connections
-            self._connected = False
-            self._collection_name = collection_name
+            from pymilvus import MilvusClient
 
-            if uri:
-                self.connections.connect(uri=uri)
-            else:
-                # Default local connection
-                self.connections.connect("default")
+            self.client = MilvusClient(uri=self.uri, token=self.token)
 
-            # Load collection if exists
-            try:
-                self.collection = self.Collection(collection_name)
-                self.collection.load()
-                self._connected = True
-            except Exception:
-                logger.warning(f"Collection {collection_name} not found, using mock mode")
-                self._connected = False
+            # Switch to database if specified
+            if self.database and self.database != "default":
+                self.client.use_database(db_name=self.database)
+
+            self._connected = True
+            logger.info(f"Connected to Milvus: {self.uri}/{self.database}")
+
         except ImportError:
             logger.warning("pymilvus not installed, using mock mode")
             self._connected = False
@@ -128,32 +137,69 @@ class MilvusDBClient(BaseVectorDBClient):
             logger.warning(f"Failed to connect to Milvus: {e}, using mock mode")
             self._connected = False
 
-    def search(self, query: str, top_k: int = 5) -> List[dict]:
+    async def search(self, query: str, top_k: int = 5) -> List[dict]:
         """Search for similar documents in Milvus."""
-        if not self._connected:
+        if not self._connected or self.client is None:
             return self._mock_search(query, top_k)
 
         try:
-            # Note: In real implementation, you would need to embed the query first
-            # This is a simplified version
-            search_params = {"metric_type": "COSINE", "params": {"nprobe": 10}}
-            results = self.collection.search(
-                data=[query],  # Would need embedding here
-                anns_field="embedding",
-                param=search_params,
+            # Get query embedding based on provider type
+            import httpx
+            provider = os.environ.get("EMBEDDING_PROVIDER", "openai")
+            base_url = os.environ.get("EMBEDDING_BASE_URL", "").rstrip("/")
+            model = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+
+            if provider == "ollama":
+                # Ollama format: POST {base_url}/api/embeddings
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{base_url}/api/embeddings",
+                        json={"model": model, "prompt": query},
+                        timeout=60.0
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    query_embedding = result.get("embedding", [])
+            else:
+                # OpenAI-compatible format: use langchain
+                from langchain_openai import OpenAIEmbeddings
+                embeddings = OpenAIEmbeddings(
+                    model=model,
+                    api_key=os.environ.get("EMBEDDING_API_KEY", "dummy"),
+                    base_url=base_url if base_url else None
+                )
+                query_embedding = await embeddings.aembed_query(query)
+
+            if not query_embedding:
+                raise ValueError("Empty embedding returned")
+
+            # Search using MilvusClient
+            search_params = {"metric_type": self.metric_type, "params": {"nprobe": 10}}
+            results = self.client.search(
+                collection_name=self.collection_name,
+                data=[query_embedding],
+                anns_field=self.anns_field,
+                search_params=search_params,
                 limit=top_k,
-                output_fields=["content", "metadata"]
+                output_fields=["chunk_id", "content", "file_name", "file_id"]
             )
 
             documents = []
             for hit in results[0]:
+                entity = hit.get("entity", {})
                 documents.append({
-                    "id": hit.id,
-                    "content": hit.entity.get("content", ""),
-                    "metadata": hit.entity.get("metadata", {}),
-                    "score": hit.score
+                    "id": hit.get("id", f"doc_{len(documents)}"),
+                    "content": entity.get("content", hit.get("content", "")),
+                    "metadata": {
+                        "file_id": entity.get("file_id", hit.get("file_id")),
+                        "file_name": entity.get("file_name", hit.get("file_name")),
+                        "chunk_id": entity.get("chunk_id", hit.get("chunk_id"))
+                    },
+                    "score": hit.get("score", 0.0)
                 })
+
             return documents
+
         except Exception as e:
             logger.error(f"Milvus search error: {e}")
             return self._mock_search(query, top_k)
@@ -181,7 +227,11 @@ def get_vector_db_client(provider: str = "chroma", **kwargs) -> BaseVectorDBClie
     elif provider == "milvus":
         return MilvusDBClient(
             collection_name=kwargs.get("collection_name", "documents"),
-            uri=kwargs.get("uri")
+            uri=kwargs.get("uri"),
+            token=kwargs.get("token"),
+            database=kwargs.get("database", "default"),
+            anns_field=kwargs.get("anns_field"),
+            metric_type=kwargs.get("metric_type")
         )
     else:
         raise ValueError(f"Unsupported vector DB provider: {provider}")
@@ -228,14 +278,14 @@ class SimpleReranker:
 def create_search_node(vector_db_client: BaseVectorDBClient):
     """Create a search node with the given vector DB client."""
 
-    def search_node(state: RAGState) -> RAGState:
+    async def search_node(state: RAGState) -> RAGState:
         """Search for relevant documents."""
         query = state["query"]
         top_k = state.get("top_k", 5)
 
         logger.info(f"Searching for: {query[:50]}...")
 
-        results = vector_db_client.search(query, top_k)
+        results = await vector_db_client.search(query, top_k)
 
         logger.info(f"Found {len(results)} results")
 
@@ -288,7 +338,7 @@ def create_format_node():
             references.append({
                 "id": doc.get("id", ""),
                 "content": doc.get("content", "")[:500],  # Truncate long content
-                "source": doc.get("metadata", {}).get("source", "unknown"),
+                "source": doc.get("metadata", {}).get("file_name", "unknown"), # change field name according to db setting
                 "score": doc.get("score", 0.0)
             })
 
@@ -398,6 +448,12 @@ async def execute_rag_workflow(
         collection_name = os.environ.get("VECTOR_DB_COLLECTION", "documents")
     if top_k is None:
         top_k = int(os.environ.get("VECTOR_DB_TOP_K", 5))
+    if "database" not in kwargs:
+        kwargs["database"] = os.environ.get("VECTOR_DB_DATABASE", "default")
+    if "anns_field" not in kwargs:
+        kwargs["anns_field"] = os.environ.get("VECTOR_DB_ANNS_FIELD")
+    if "metric_type" not in kwargs:
+        kwargs["metric_type"] = os.environ.get("VECTOR_DB_METRIC_TYPE", "COSINE")
 
     # Create workflow
     workflow = create_rag_workflow(
