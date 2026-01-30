@@ -107,20 +107,25 @@ Reply "approve" to execute.
 ```
 
 ### Step 3: WAIT
-STOP. Do NOT do any work yourself. Wait for user approval.
+After outputting approval request, wait for user's response.
 
-### Step 4: EXECUTE (After approval)
-Read todos and delegate to executor:
-```
-task(subagent_name="executor", task="[specific task from TODO]. Context: [relevant plan details]")
-```
+### Step 4: EXECUTE (After user approves)
+When user says "approve" or similar, READ TODOS and execute each task:
+1. read_todos() → get pending tasks
+2. For each pending task, call executor:
+   ```
+   task(subagent_name="executor", task="[task from TODO]. Context: [plan summary]")
+   ```
+3. Update TODO with write_todos() when done
 
 ### Step 5: REVIEW
-After executor completes, call reviewer.
+After executor completes all tasks, call reviewer.
 
 ## CRITICAL
 - NEVER write code, create files, or execute commands yourself
 - ALWAYS delegate to executor subagent
+- When user says "approve", you MUST continue to execution phase
+- Read todos and delegate all pending tasks to executor
 - You are INCAPABLE of doing actual work - you only coordinate"""
 
     return create_deep_agent(
@@ -131,6 +136,11 @@ After executor completes, call reviewer.
         skills=planner_skills,
         subagents=[planner_subagent, executor_subagent, reviewer_subagent],
         checkpointer=checkpointer,
+        interrupt_on={
+            "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+            "execute": {"allowed_decisions": ["approve", "reject"]},
+            "run_python": {"allowed_decisions": ["approve", "reject"]},
+        },
     )
 
 
@@ -138,22 +148,6 @@ def _has_valid_api_key() -> bool:
     """Check if a valid API key is configured."""
     settings = get_model_settings()
     return bool(settings.api_key and settings.api_key != "dummy")
-
-
-if __name__ == "__main__":
-    print("Testing Coordinator Agent...")
-    agent = create_coordinator_agent()
-    print("Coordinator agent created successfully!")
-    print(f"Type: {type(agent)}")
-
-    if _has_valid_api_key():
-        from langchain_core.messages import HumanMessage
-        result = agent.invoke({"messages": [HumanMessage(content="Hello!")]})
-        print(f"Response: {result['messages'][-1].content[:100]}...")
-    else:
-        print("Skipping invoke test. Set OPENAI_API_KEY to test.")
-
-
 
 def create_coordinator_with_workflows(
     research_workflow,
@@ -244,3 +238,20 @@ The planner has domain-specific skills (web-dev, data-science, devops) that acti
         skills=planner_skills,
         subagents=[research_subagent, coding_subagent, planner_subagent, executor_subagent, reviewer_subagent],
     )
+
+
+if __name__ == "__main__":
+    print("Testing Coordinator Agent...")
+    agent = create_coordinator_agent()
+    print("Coordinator agent created successfully!")
+    print(f"Type: {type(agent)}")
+
+    if _has_valid_api_key():
+        from langchain_core.messages import HumanMessage
+        result = agent.invoke({"messages": [HumanMessage(content="Hello!")]})
+        print(f"Response: {result['messages'][-1].content[:100]}...")
+    else:
+        print("Skipping invoke test. Set OPENAI_API_KEY to test.")
+
+
+
